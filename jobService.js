@@ -1,99 +1,67 @@
-import fetch from 'node-fetch'
-import { JOB_APP, VIDEO_APP } from './config.js'
+import fetch from "node-fetch";
+import { JOB_APP } from "./config.js";
 
-// ===== TOKEN =====
-async function getToken(app) {
-  const res = await fetch(
-    'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        app_id: app.APP_ID,
-        app_secret: app.APP_SECRET
-      })
-    }
-  )
-  const data = await res.json()
-  return data.tenant_access_token
+/**
+ * Lấy access token cho app Lark
+ */
+async function getTenantToken() {
+  const res = await fetch("https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      app_id: JOB_APP.APP_ID,
+      app_secret: JOB_APP.APP_SECRET
+    })
+  });
+
+  const data = await res.json();
+  if (!data.tenant_access_token) {
+    throw new Error("Không lấy được tenant_access_token");
+  }
+  return data.tenant_access_token;
 }
 
-// ===== QUERY JOB =====
-async function queryJobs(token, filter, limit) {
-  const url =
-    `https://open.larksuite.com/open-apis/bitable/v1/apps/${JOB_APP.BASE_ID}` +
-    `/tables/${JOB_APP.TABLE_ID}/records?filter=${encodeURIComponent(filter)}&page_size=${limit}`
+/**
+ * Lấy danh sách job hợp lệ
+ */
+export async function getValidJobs(limit = 5) {
+  const token = await getTenantToken();
+
+  const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${JOB_APP.BASE_ID}/tables/${JOB_APP.TABLE_ID}/records?page_size=100`;
 
   const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` }
-  })
-
-  const data = await res.json()
-  return data.data?.items || []
-}
-
-// ===== CREATE VIDEO =====
-async function createVideo(token, fields) {
-  return fetch(
-    `https://open.larksuite.com/open-apis/bitable/v1/apps/${VIDEO_APP.BASE_ID}` +
-      `/tables/${VIDEO_APP.TABLE_ID}/records`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ fields })
+    headers: {
+      Authorization: `Bearer ${token}`
     }
-  )
-}
+  });
 
-// ===== UPDATE JOB =====
-async function updateJob(token, recordId) {
-  return fetch(
-    `https://open.larksuite.com/open-apis/bitable/v1/apps/${JOB_APP.BASE_ID}` +
-      `/tables/${JOB_APP.TABLE_ID}/records/${recordId}`,
-    {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        fields: { 'Đã làm video': true }
-      })
-    }
-  )
-}
+  const data = await res.json();
+  const records = data.data?.items || [];
 
-// ===== MAIN SERVICE =====
-export async function runBatch(soLuong) {
-  const jobToken = await getToken(JOB_APP)
-  const videoToken = await getToken(VIDEO_APP)
+  // ==== LỌC JOB ====
+  const VALID_GROUPS = ["POD", "POD/Dropship", "Dropship"];
 
-  const filter = `
-    Đã làm video = false
-    AND (
-      Nhóm việc = "POD"
-      OR Nhóm việc = "POD/Dropship"
-      OR Nhóm việc = "Dropship"
-    )
-  `
+  const jobs = records
+    .map(r => ({
+      record_id: r.record_id,
+      ...r.fields
+    }))
+    .filter(job => {
+      const daLamVideo = job["Đã làm video"];
+      const nhomViec = job["Nhóm việc"];
+      const trangThai = job["Trạng thái"];
 
-  const jobs = await queryJobs(jobToken, filter, soLuong)
+      if (daLamVideo === true) return false;
+      if (!VALID_GROUPS.includes(nhomViec)) return false;
 
-  for (const job of jobs) {
-    const f = job.fields
+      return true;
+    });
 
-    await createVideo(videoToken, {
-      'Mã': f['Mã'],
-      'Công ty': f['Công ty'],
-      'Công việc': f['Công việc'],
-      'Link JD': f['Link JD']
-    })
+  // Ưu tiên Đang tuyển
+  const uuTien = jobs.filter(j => j["Trạng thái"] === "Đang tuyển");
+  const conLai = jobs.filter(j => j["Trạng thái"] !== "Đang tuyển");
 
-    await updateJob(jobToken, job.record_id)
-  }
+  const ketQua = [...uuTien, ...conLai].slice(0, limit);
 
-  return jobs.length
+  return ketQua;
 }
