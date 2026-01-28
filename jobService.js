@@ -1,5 +1,11 @@
 import fetch from "node-fetch";
-import { JOB_APP } from "./config.js";
+const JOB_APP = {
+  APP_ID: process.env.JOB_LARK_APP_ID,
+  APP_SECRET: process.env.JOB_LARK_APP_SECRET,
+  BASE_ID: process.env.JOB_BASE_ID,
+  TABLE_ID: process.env.JOB_TABLE_ID,
+};
+
 
 /**
  * Lấy access token cho app Lark
